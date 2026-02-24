@@ -1,0 +1,13 @@
+PySide6
+modelscope
+torch
+transformers
+accelerate
+sounddevice
+numpy
+scipy
+pynput
+pyperclip
+funasr
+librosa
+qwen-asr
