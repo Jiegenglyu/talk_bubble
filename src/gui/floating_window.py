@@ -1,8 +1,42 @@
 import sys
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                               QHBoxLayout, QPushButton, QLabel, QTextEdit, QSystemTrayIcon, QMenu, QFrame, QGraphicsDropShadowEffect, QInputDialog, QLineEdit)
+                               QHBoxLayout, QPushButton, QLabel, QTextEdit, QSystemTrayIcon, QMenu, QFrame, QGraphicsDropShadowEffect, QInputDialog, QLineEdit, QToolButton, QSizePolicy)
 from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QSize
 from PySide6.QtGui import QIcon, QAction, QCursor, QColor, QPainter, QPainterPath, QFont, QPixmap
+
+# Prompt Presets
+PROMPT_PRESETS = {
+    "agent": {
+        "name_en": "Agent Coding (Default)",
+        "name_zh": "Agent Coding (默认)",
+        "prompt": "Strictly preserve the user's original intent. Do not add new features or information not present in the source. Fix terminology and structure only." 
+    },
+    "email": {
+        "name_en": "Email Polish",
+        "name_zh": "邮件润色",
+        "prompt": "Refine the text into a professional email. Strictly adhere to the original meaning. Do not add new information or hallucinate details. Fix grammar and tone only."
+    },
+    "meeting": {
+        "name_en": "Meeting Minutes",
+        "name_zh": "会议纪要",
+        "prompt": "Summarize into meeting minutes based ONLY on the provided text. Do not invent discussion points. Identify key decisions and actions present in the text."
+    },
+    "comments": {
+        "name_en": "Code Comments",
+        "name_zh": "代码注释",
+        "prompt": "Generate code comments based strictly on the provided logic. Do not assume functionality not present in the text. Use standard technical terminology."
+    },
+    "requirements": {
+        "name_en": "Requirement Breakdown",
+        "name_zh": "需求拆解",
+        "prompt": "Break down the requirements into technical tasks. Strictly follow the user's scope. Do not add features or assumptions not explicitly stated."
+    },
+    "summary": {
+        "name_en": "Key Points",
+        "name_zh": "要点提炼",
+        "prompt": "Extract key points from the text. Strictly maintain the original facts. Do not add external information."
+    }
+}
 
 # Localization Dictionary
 TRANSLATIONS = {
@@ -26,6 +60,7 @@ TRANSLATIONS = {
         "tooltip_settings": "Settings",
         "settings_title": "Settings",
         "language_label": "Language",
+        "status_loading_model": "Models Loading...",
     },
     "zh": {
         "status_ready": "TalkBubble",
@@ -47,6 +82,7 @@ TRANSLATIONS = {
         "tooltip_settings": "设置",
         "settings_title": "设置",
         "language_label": "语言",
+        "status_loading_model": "模型加载中...",
     }
 }
 
@@ -219,17 +255,53 @@ class FloatingWindow(QMainWindow):
         self.record_btn.setIcon(QIcon()) # Remove if any
         self.record_btn.clicked.connect(self.toggle_recording)
         self.record_btn.setCursor(Qt.PointingHandCursor)
+        self.record_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.controls_layout.addWidget(self.record_btn)
         
-        self.refine_btn = QPushButton(self.tr("btn_refine"))
-        self.refine_btn.clicked.connect(self.on_refine_clicked)
+        # Refine Button with Dropdown Menu
+        self.refine_btn = QToolButton()
+        self.refine_btn.setText(self.tr("btn_refine"))
+        self.refine_btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.refine_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self.refine_btn.setCursor(Qt.PointingHandCursor)
+        self.refine_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.refine_btn.clicked.connect(self.on_refine_clicked)
+        
+        # Build Menu
+        self.refine_menu = QMenu(self.refine_btn)
+        self.refine_menu.setStyleSheet("""
+            QMenu {
+                background-color: #2D2D2D;
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 30);
+                border-radius: 6px;
+                padding: 4px;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #007AFF;
+            }
+        """)
+        
+        # Add presets to menu
+        for key, data in PROMPT_PRESETS.items():
+            name = data["name_zh"] if self.current_lang == "zh" else data["name_en"]
+            action = QAction(name, self)
+            # Use lambda to capture key
+            action.triggered.connect(lambda checked=False, k=key: self.set_prompt_mode(k))
+            self.refine_menu.addAction(action)
+            
+        self.refine_btn.setMenu(self.refine_menu)
         self.controls_layout.addWidget(self.refine_btn)
         
         self.copy_btn = QPushButton(self.tr("btn_copy"))
         self.copy_btn.setVisible(False)
         self.copy_btn.clicked.connect(self.copy_text)
         self.copy_btn.setCursor(Qt.PointingHandCursor)
+        self.copy_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.controls_layout.addWidget(self.copy_btn)
         
         self.layout.addWidget(self.controls)
@@ -245,6 +317,7 @@ class FloatingWindow(QMainWindow):
         
         # State
         self.is_recording = False
+        self.is_model_ready = False
         
         # Tray Icon setup with dynamic icon
         self.tray_icon = QSystemTrayIcon(self)
@@ -396,7 +469,7 @@ class FloatingWindow(QMainWindow):
             }
             
             /* Action Buttons (Record, Refine, Copy) */
-            QPushButton {
+            QPushButton, QToolButton {
                 background-color: rgba(255, 255, 255, 15);
                 border: 1px solid rgba(255, 255, 255, 10);
                 border-radius: 6px;
@@ -406,14 +479,18 @@ class FloatingWindow(QMainWindow):
                 font-weight: 500;
                 padding: 6px 12px;
             }
-            QPushButton:hover {
+            QPushButton:hover, QToolButton:hover {
                 background-color: rgba(255, 255, 255, 25);
             }
-            QPushButton:pressed {
+            QPushButton:pressed, QToolButton:pressed {
                 background-color: rgba(255, 255, 255, 10);
             }
             
             /* Specific Button Colors */
+            QToolButton::menu-button {
+                 border-left: 1px solid rgba(255,255,255,30);
+                 width: 16px;
+            }
             QPushButton#stop_btn {
                 background-color: rgba(255, 59, 48, 0.8); /* Mac Red */
                 color: white;
@@ -505,11 +582,28 @@ class FloatingWindow(QMainWindow):
     def mouseReleaseEvent(self, event):
         self.old_pos = None
 
+    def set_models_ready(self, ready: bool):
+        self.is_model_ready = ready
+        # self.record_btn.setEnabled(ready) # User wants it clickable with prompt
+        # self.refine_btn.setEnabled(ready) # User wants it clickable with prompt
+        if ready:
+             self.status_label.setText(self.tr("status_ready"))
+
     def toggle_recording(self):
+        if not self.is_model_ready:
+            self.status_label.setText(self.tr("status_loading_model"))
+            # Use lambda with weak ref or check state to avoid crash if window closed
+            QTimer.singleShot(1500, self.reset_status_if_waiting)
+            return
+
         if not self.is_recording:
             self.start_recording()
         else:
             self.stop_recording()
+
+    def reset_status_if_waiting(self):
+        if self.status_label.text() == self.tr("status_loading_model"):
+            self.status_label.setText(self.tr("status_ready"))
 
     def start_recording(self):
         self.is_recording = True
@@ -529,7 +623,28 @@ class FloatingWindow(QMainWindow):
         self.record_btn.setStyleSheet(self.record_btn.styleSheet())
         self.stop_recording_signal.emit()
 
+    def set_prompt_mode(self, mode_key):
+        preset = PROMPT_PRESETS.get(mode_key)
+        if not preset:
+            return
+            
+        # Update custom prompt text
+        self.custom_prompt_text = preset["prompt"]
+        
+        # Update UI feedback (Optional: Toast or Tooltip)
+        name = preset["name_zh"] if self.current_lang == "zh" else preset["name_en"]
+        self.refine_btn.setToolTip(f"Mode: {name}")
+        
+        # Show a temporary status
+        self.status_label.setText(f"Mode: {name}")
+        QTimer.singleShot(1500, self.update_ui_text) # Reset after 1.5s
+
     def on_refine_clicked(self):
+        if not self.is_model_ready:
+            self.status_label.setText(self.tr("status_loading_model"))
+            QTimer.singleShot(1500, self.reset_status_if_waiting)
+            return
+
         if self.is_recording:
             return
         
@@ -548,20 +663,41 @@ class FloatingWindow(QMainWindow):
         import signal
         os.kill(os.getpid(), signal.SIGKILL)
 
-    def update_text(self, text):
+    def update_text(self, text, is_final=True):
         self.text_area.setVisible(True)
+        
+        scrollbar = self.text_area.verticalScrollBar()
+        # Check if user is near the bottom (allow some pixel tolerance)
+        was_at_bottom = (scrollbar.value() >= (scrollbar.maximum() - 20))
+        
+        # Save old value to try to restore relative position if needed
+        old_val = scrollbar.value()
+        
         self.text_area.setText(text)
+        
+        if is_final:
+             # Always scroll to end for final result
+             scrollbar.setValue(scrollbar.maximum())
+        elif was_at_bottom:
+             # Auto-scroll if user was at bottom
+             scrollbar.setValue(scrollbar.maximum())
+        else:
+             # User was scrolling up, keep position
+             scrollbar.setValue(old_val)
+
         self.copy_btn.setVisible(True)
         self.refine_btn.setEnabled(True)
-        self.status_label.setText(self.tr("status_done"))
         
-        # Reset recording UI if needed
-        self.record_btn.setText(self.tr("btn_record"))
-        self.record_btn.setObjectName("")
-        self.record_btn.setStyleSheet(self.record_btn.styleSheet())
-        self.is_recording = False
-        
-        self.adjustSize()
+        if is_final:
+            self.status_label.setText(self.tr("status_done"))
+            
+            # Reset recording UI if needed
+            self.record_btn.setText(self.tr("btn_record"))
+            self.record_btn.setObjectName("")
+            self.record_btn.setStyleSheet(self.record_btn.styleSheet())
+            self.is_recording = False
+            
+            self.adjustSize()
     
     def handle_error(self, msg):
         self.status_label.setText(self.tr("status_error"))

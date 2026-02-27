@@ -38,7 +38,7 @@ class LLMEngine:
                  self.model_name = "Load Failed"
                  raise e
 
-    def process_text(self, text, context="", custom_prompt=""):
+    def process_text(self, text, context="", custom_prompt="", stream_callback=None):
         # If text is empty but context exists, treat context as the text to be refined
         target_text = text
         instruction = ""
@@ -73,10 +73,11 @@ class LLMEngine:
         
         # If user provided custom prompt, prepend/replace or mix?
         # Usually custom prompt is "Translate to English" or "Make it formal"
-        # Let's treat it as an additional instruction overriding default style
+        # If custom prompt is provided, we prioritize it over the base agent coding logic
         if custom_prompt:
-             system_prompt = f"You are a helpful assistant. Instruction: {custom_prompt}\n" \
-                             f"Original Requirements (follow if not conflicting): {base_system_prompt}"
+             # Use the custom prompt as the primary instruction
+             system_prompt = f"You are a helpful expert assistant. Your primary task is: {custom_prompt}\n" \
+                             f"Please follow the instructions in the task description strictly."
         else:
              system_prompt = base_system_prompt
         
@@ -98,27 +99,33 @@ class LLMEngine:
         
         model_inputs = self.tokenizer([text_input], return_tensors="pt").to(self.device)
         
-        generated_ids = self.model.generate(
-            model_inputs.input_ids,
-            max_new_tokens=1024, # Increased for thinking tokens
+        # Streamer
+        from transformers import TextIteratorStreamer
+        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
+        
+        generation_kwargs = dict(
+            input_ids=model_inputs.input_ids,
+            max_new_tokens=1024,
             do_sample=True,
-            temperature=0.6, # Recommended for Qwen3 thinking
+            temperature=0.6,
             top_p=0.95,
             top_k=20,
-            min_p=0
+            min_p=0,
+            streamer=streamer
         )
+
+        import threading
+        thread = threading.Thread(target=self.model.generate, kwargs=generation_kwargs)
+        thread.start()
         
-        # Qwen3 output parsing
-        output_ids = generated_ids[0][len(model_inputs.input_ids[0]):].tolist()
+        generated_text = ""
+        for new_text in streamer:
+            generated_text += new_text
+            if stream_callback:
+                stream_callback(generated_text)
+                
+        # Try to clean up thinking tokens if they leaked (TextIteratorStreamer usually handles skip_special_tokens)
+        # But Qwen3 thinking format might be custom text like <think>...</think> if tokenizer doesn't mark them special.
+        # Assuming Qwen3 tokenizer handles special tokens correctly.
         
-        # Try to find end of thinking
-        try:
-             # Look for </think> token (151668)
-            index = len(output_ids) - output_ids[::-1].index(151668)
-            # content is after </think>
-            content = self.tokenizer.decode(output_ids[index:], skip_special_tokens=True).strip()
-        except ValueError:
-            # If no </think> found, maybe thinking was disabled or failed, return full text
-            content = self.tokenizer.decode(output_ids, skip_special_tokens=True).strip()
-            
-        return content
+        return generated_text

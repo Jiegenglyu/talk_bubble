@@ -41,13 +41,29 @@ class AudioCapture:
         )
         self.stream.start()
 
+    def read_available_audio(self):
+        """Read all available audio chunks from the queue without stopping."""
+        new_data = []
+        while not self.audio_queue.empty():
+            try:
+                chunk = self.audio_queue.get_nowait()
+                new_data.append(chunk)
+                self.buffer.append(chunk)  # Keep a copy for stop_recording
+            except queue.Empty:
+                break
+        
+        if not new_data:
+            return None
+            
+        return np.concatenate(new_data, axis=0)
+
     def stop_recording(self):
         self.recording = False
         if hasattr(self, 'stream'):
             self.stream.stop()
             self.stream.close()
         
-        # Collect all data from queue
+        # Collect all remaining data from queue
         while not self.audio_queue.empty():
             self.buffer.append(self.audio_queue.get())
             

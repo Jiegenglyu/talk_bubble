@@ -17,6 +17,7 @@ class ASREngine:
         # However, transformers usually handles it. Let's try CPU first for stability as per qwen-asr notes.
         # If performance is an issue, we can try "mps".
         self.device = "cpu" 
+        self.model_name = model_id
 
         print(f"Loading ASR model {model_id} on {self.device}...")
         try:
