@@ -1,8 +1,15 @@
 import sys
+import json
+import os
+import time
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                               QHBoxLayout, QPushButton, QLabel, QTextEdit, QSystemTrayIcon, QMenu, QFrame, QGraphicsDropShadowEffect, QInputDialog, QLineEdit, QToolButton, QSizePolicy)
-from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QSize
-from PySide6.QtGui import QIcon, QAction, QCursor, QColor, QPainter, QPainterPath, QFont, QPixmap
+                               QHBoxLayout, QPushButton, QLabel, QTextEdit, QSystemTrayIcon, QMenu, QFrame, QGraphicsDropShadowEffect, QInputDialog, QLineEdit, QToolButton, QSizePolicy, QTextBrowser)
+from PySide6.QtCore import Qt, QTimer, Signal, QPoint, QSize, QUrl
+from PySide6.QtGui import QIcon, QAction, QCursor, QColor, QPainter, QPainterPath, QFont, QPixmap, QDesktopServices
+from collections import deque
+
+# Data Storage
+PRESETS_FILE = os.path.expanduser("~/.talk_bubble/presets.json")
 
 # Prompt Presets
 PROMPT_PRESETS = {
@@ -61,6 +68,10 @@ TRANSLATIONS = {
         "settings_title": "Settings",
         "language_label": "Language",
         "status_loading_model": "Models Loading...",
+        "btn_clear": "Clear",
+        "history_menu": "History",
+        "history_empty": "No History",
+        "history_copied": "Copied to Clipboard",
     },
     "zh": {
         "status_ready": "TalkBubble",
@@ -83,6 +94,10 @@ TRANSLATIONS = {
         "settings_title": "设置",
         "language_label": "语言",
         "status_loading_model": "模型加载中...",
+        "btn_clear": "清屏",
+        "history_menu": "历史记录",
+        "history_empty": "暂无历史",
+        "history_copied": "已复制到剪贴板",
     }
 }
 
@@ -99,7 +114,8 @@ class WaveformWidget(QWidget):
 
     def add_level(self, level):
         self.levels.append(level)
-        if len(self.levels) > 40:
+        # Keep enough history for a wide window (e.g. 600px width / 5px per bar = 120 bars)
+        if len(self.levels) > 120:
             self.levels.pop(0)
         self.update()
 
@@ -146,6 +162,9 @@ class FloatingWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("TalkBubble")
         self.current_lang = "zh" 
+        
+        # History
+        self.history = deque(maxlen=3)
         
         # Window flags for floating behavior
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint | Qt.Tool)
@@ -234,6 +253,18 @@ class FloatingWindow(QMainWindow):
         self.waveform_view.setFixedHeight(30)
         self.layout.addWidget(self.waveform_view)
         
+        # Thinking Process Area (Initially Hidden)
+        self.thinking_area = QTextBrowser()
+        self.thinking_area.setVisible(False)
+        self.thinking_area.setOpenExternalLinks(False)
+        self.thinking_area.anchorClicked.connect(self.on_thinking_anchor_clicked)
+        # Default small height for collapsed state
+        self.thinking_area.setMaximumHeight(40)
+        self.layout.addWidget(self.thinking_area)
+        
+        self.full_thinking_text = ""
+        self.is_thinking_expanded = False
+        
         # Text Area (Hidden initially)
         self.text_area = QTextEdit()
         self.text_area.setPlaceholderText(self.tr("placeholder_text"))
@@ -243,6 +274,10 @@ class FloatingWindow(QMainWindow):
         
         # Store custom prompt text
         self.custom_prompt_text = ""
+        
+        # Load Presets
+        self.presets = PROMPT_PRESETS.copy()
+        self.load_custom_presets()
 
         # Controls
         self.controls = QWidget()
@@ -286,13 +321,7 @@ class FloatingWindow(QMainWindow):
             }
         """)
         
-        # Add presets to menu
-        for key, data in PROMPT_PRESETS.items():
-            name = data["name_zh"] if self.current_lang == "zh" else data["name_en"]
-            action = QAction(name, self)
-            # Use lambda to capture key
-            action.triggered.connect(lambda checked=False, k=key: self.set_prompt_mode(k))
-            self.refine_menu.addAction(action)
+        self.update_refine_menu()
             
         self.refine_btn.setMenu(self.refine_menu)
         self.controls_layout.addWidget(self.refine_btn)
@@ -303,6 +332,14 @@ class FloatingWindow(QMainWindow):
         self.copy_btn.setCursor(Qt.PointingHandCursor)
         self.copy_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.controls_layout.addWidget(self.copy_btn)
+
+        # Clear Screen Button
+        self.clear_btn = QPushButton(self.tr("btn_clear"))
+        self.clear_btn.setVisible(True) # Always visible or only when text present? Let's make it always visible for easy reset
+        self.clear_btn.clicked.connect(self.clear_screen)
+        self.clear_btn.setCursor(Qt.PointingHandCursor)
+        self.clear_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.controls_layout.addWidget(self.clear_btn)
         
         self.layout.addWidget(self.controls)
 
@@ -407,6 +444,28 @@ class FloatingWindow(QMainWindow):
             }
         """)
         
+        # History Submenu
+        history_menu = menu.addMenu(self.tr("history_menu"))
+        # Ensure submenu inherits style or has its own
+        history_menu.setStyleSheet(menu.styleSheet())
+        
+        if not self.history:
+             empty_action = QAction(self.tr("history_empty"), self)
+             empty_action.setEnabled(False)
+             history_menu.addAction(empty_action)
+        else:
+             # Show latest first? Deque appends to right. So list(history)[::-1]
+             for i, item in enumerate(reversed(list(self.history))):
+                 preview = item.strip().replace("\n", " ")
+                 if len(preview) > 20:
+                     preview = preview[:20] + "..."
+                 action = QAction(f"{preview}", self)
+                 # Need to bind the full text
+                 action.triggered.connect(lambda checked=False, txt=item: self.copy_history_item(txt))
+                 history_menu.addAction(action)
+
+        menu.addSeparator()
+
         # Language Toggle
         lang_text = "Switch to English" if self.current_lang == "zh" else "切换到中文"
         lang_action = QAction(lang_text, self)
@@ -419,7 +478,34 @@ class FloatingWindow(QMainWindow):
         prompt_action.triggered.connect(self.open_prompt_dialog)
         menu.addAction(prompt_action)
         
+        # Add Custom Preset
+        add_preset_text = "Save Current as Preset..." if self.current_lang == "en" else "保存当前为预设..."
+        add_action = QAction(add_preset_text, self)
+        add_action.triggered.connect(self.open_add_preset_dialog)
+        menu.addAction(add_action)
+        
         menu.exec(self.settings_btn.mapToGlobal(QPoint(0, self.settings_btn.height() + 5)))
+
+    def open_add_preset_dialog(self):
+        # 1. Ask for Name
+        title = "New Preset" if self.current_lang == "en" else "新建预设"
+        label = "Preset Name:" if self.current_lang == "en" else "预设名称:"
+        name, ok = QInputDialog.getText(self, title, label)
+        if not ok or not name.strip():
+            return
+            
+        # 2. Ask for Prompt (pre-fill with current custom prompt)
+        label_prompt = "Instruction Content:" if self.current_lang == "en" else "指令内容:"
+        prompt, ok = QInputDialog.getText(self, title, label_prompt, QLineEdit.Normal, self.custom_prompt_text)
+        if ok and prompt.strip():
+            # Generate a key
+            key = f"custom_{int(time.time())}"
+            self.save_custom_preset(key, name.strip(), prompt.strip())
+            
+            # Feedback
+            msg = "Saved!" if self.current_lang == "en" else "已保存!"
+            self.status_label.setText(msg)
+            QTimer.singleShot(1500, self.update_ui_text)
 
     def open_prompt_dialog(self):
         title = "Custom Prompt" if self.current_lang == "en" else "自定义指令"
@@ -458,7 +544,7 @@ class FloatingWindow(QMainWindow):
             }
             
             /* Text Area */
-            QTextEdit {
+            QTextEdit, QTextBrowser {
                 background-color: rgba(0, 0, 0, 40);
                 border: 1px solid rgba(255, 255, 255, 20);
                 border-radius: 6px;
@@ -558,6 +644,7 @@ class FloatingWindow(QMainWindow):
              
         self.refine_btn.setText(self.tr("btn_refine"))
         self.copy_btn.setText(self.tr("btn_copy"))
+        self.clear_btn.setText(self.tr("btn_clear"))
         
         self.text_area.setPlaceholderText(self.tr("placeholder_text"))
 
@@ -588,6 +675,51 @@ class FloatingWindow(QMainWindow):
         # self.refine_btn.setEnabled(ready) # User wants it clickable with prompt
         if ready:
              self.status_label.setText(self.tr("status_ready"))
+
+    def load_custom_presets(self):
+        if os.path.exists(PRESETS_FILE):
+            try:
+                with open(PRESETS_FILE, 'r', encoding='utf-8') as f:
+                    custom = json.load(f)
+                    self.presets.update(custom)
+            except Exception as e:
+                print(f"Failed to load presets: {e}")
+
+    def save_custom_preset(self, key, name, prompt):
+        new_preset = {
+            "name_en": name,
+            "name_zh": name,
+            "prompt": prompt
+        }
+        self.presets[key] = new_preset
+        self.update_refine_menu()
+        
+        # Save custom presets (excluding defaults)
+        to_save = {k: v for k, v in self.presets.items() if k not in PROMPT_PRESETS}
+        
+        os.makedirs(os.path.dirname(PRESETS_FILE), exist_ok=True)
+        try:
+            with open(PRESETS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(to_save, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Failed to save preset: {e}")
+
+    def update_refine_menu(self):
+        self.refine_menu.clear()
+        
+        # Sort keys to keep defaults first if possible, or just alphabetic
+        # Let's prioritize defaults, then custom
+        default_keys = [k for k in PROMPT_PRESETS.keys()]
+        custom_keys = [k for k in self.presets.keys() if k not in PROMPT_PRESETS]
+        
+        for key in default_keys + custom_keys:
+            data = self.presets.get(key)
+            if not data: continue
+            
+            name = data["name_zh"] if self.current_lang == "zh" else data["name_en"]
+            action = QAction(name, self)
+            action.triggered.connect(lambda checked=False, k=key: self.set_prompt_mode(k))
+            self.refine_menu.addAction(action)
 
     def toggle_recording(self):
         if not self.is_model_ready:
@@ -624,7 +756,7 @@ class FloatingWindow(QMainWindow):
         self.stop_recording_signal.emit()
 
     def set_prompt_mode(self, mode_key):
-        preset = PROMPT_PRESETS.get(mode_key)
+        preset = self.presets.get(mode_key)
         if not preset:
             return
             
@@ -663,7 +795,83 @@ class FloatingWindow(QMainWindow):
         import signal
         os.kill(os.getpid(), signal.SIGKILL)
 
+    def on_thinking_anchor_clicked(self, url):
+        if url.toString() == "toggle_think":
+            self.is_thinking_expanded = not self.is_thinking_expanded
+            self.render_thinking()
+
+    def render_thinking(self):
+        if not self.full_thinking_text:
+            self.thinking_area.setVisible(False)
+            return
+
+        self.thinking_area.setVisible(True)
+        
+        # User requested: "Show 10 chars, then collapse"
+        limit = 10
+        if len(self.full_thinking_text) <= limit:
+            html = f"<div style='color: #AAA; font-style: italic;'>{self.full_thinking_text}</div>"
+            self.thinking_area.setMaximumHeight(40)
+        elif self.is_thinking_expanded:
+            html = f"<div style='color: #AAA; font-style: italic;'>{self.full_thinking_text} <a href='toggle_think' style='color: #4CAF50; text-decoration: none;'>[Collapse]</a></div>"
+            self.thinking_area.setMaximumHeight(200) # Expanded height
+        else:
+            short_text = self.full_thinking_text[:limit]
+            html = f"<div style='color: #AAA; font-style: italic;'>{short_text}... <a href='toggle_think' style='color: #4CAF50; text-decoration: none;'>[Expand]</a></div>"
+            self.thinking_area.setMaximumHeight(40) # Collapsed height
+            
+        self.thinking_area.setHtml(html)
+        # Scroll to bottom if expanding?
+        if self.is_thinking_expanded:
+             sb = self.thinking_area.verticalScrollBar()
+             sb.setValue(sb.maximum())
+
+    def clear_screen(self):
+        self.text_area.clear()
+        self.thinking_area.clear()
+        self.thinking_area.setVisible(False)
+        self.full_thinking_text = ""
+        self.is_thinking_expanded = False
+        self.status_label.setText(self.tr("status_ready"))
+        self.is_recording = False
+        self.record_btn.setText(self.tr("btn_record"))
+        self.record_btn.setObjectName("")
+        self.record_btn.setStyleSheet(self.record_btn.styleSheet())
+        self.waveform_view.setVisible(False)
+        self.copy_btn.setVisible(False)
+        self.adjustSize()
+
     def update_text(self, text, is_final=True):
+        # Handle Thinking Process
+        import re
+        thinking_content = ""
+        main_content = text
+        
+        # Regex to capture optional prefix, <think>... content, and suffix
+        # (.*?) - Prefix (non-greedy)
+        # <think> - Start tag
+        # (.*?) - Thinking content (non-greedy)
+        # (?:</think>|$) - End tag or end of string
+        # (.*) - Suffix
+        match = re.search(r"(.*?)<think>(.*?)(?:</think>|$)(.*)", text, re.DOTALL | re.IGNORECASE)
+        
+        if match:
+            prefix = match.group(1)
+            thinking_content = match.group(2).strip()
+            suffix = match.group(3)
+            
+            # If we have thinking content, use it
+            if thinking_content:
+                self.full_thinking_text = thinking_content
+                self.render_thinking()
+            
+            # Combine prefix and suffix for the main text area
+            main_content = (prefix + suffix).strip()
+        else:
+            self.thinking_area.setVisible(False)
+            self.full_thinking_text = ""
+            main_content = text
+
         self.text_area.setVisible(True)
         
         scrollbar = self.text_area.verticalScrollBar()
@@ -673,11 +881,16 @@ class FloatingWindow(QMainWindow):
         # Save old value to try to restore relative position if needed
         old_val = scrollbar.value()
         
-        self.text_area.setText(text)
+        self.text_area.setText(main_content)
         
         if is_final:
              # Always scroll to end for final result
              scrollbar.setValue(scrollbar.maximum())
+             
+             # Add to History (only the main content)
+             if main_content:
+                 self.history.append(main_content)
+                 
         elif was_at_bottom:
              # Auto-scroll if user was at bottom
              scrollbar.setValue(scrollbar.maximum())
@@ -712,4 +925,10 @@ class FloatingWindow(QMainWindow):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.text_area.toPlainText())
         self.status_label.setText(self.tr("status_copied"))
+        QTimer.singleShot(2000, lambda: self.status_label.setText(self.tr("status_ready")))
+
+    def copy_history_item(self, text):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        self.status_label.setText(self.tr("history_copied"))
         QTimer.singleShot(2000, lambda: self.status_label.setText(self.tr("status_ready")))

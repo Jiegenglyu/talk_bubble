@@ -68,7 +68,8 @@ class LLMEngine:
             "2. **Structure**: Use Markdown lists for multi-step instructions.\n"
             "3. **Clarity**: Remove conversational filler ('um', 'like', 'maybe') and ambiguity.\n"
             "4. **Intent**: Explicitly state the action (Create, Debug, Refactor, Explain).\n"
-            "5. **Output**: Return ONLY the refined prompt text, no conversational filler."
+            "5. **Thinking**: You MAY output a thinking process before the final result. If you do, enclose it in <think>...</think> tags.\n"
+            "6. **Output**: Return the thinking process (optional) followed by the refined prompt text."
         )
         
         # If user provided custom prompt, prepend/replace or mix?
@@ -77,7 +78,8 @@ class LLMEngine:
         if custom_prompt:
              # Use the custom prompt as the primary instruction
              system_prompt = f"You are a helpful expert assistant. Your primary task is: {custom_prompt}\n" \
-                             f"Please follow the instructions in the task description strictly."
+                             f"Please follow the instructions in the task description strictly.\n" \
+                             f"If you need to think before answering, enclose your thoughts in <think>...</think> tags."
         else:
              system_prompt = base_system_prompt
         

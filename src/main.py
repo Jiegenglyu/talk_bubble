@@ -309,11 +309,46 @@ class MainWindow(FloatingWindow):
         self.update_text(partial_text, is_final=False)
         # Maybe scroll to bottom?
         # self.text_area.moveCursor(QTextCursor.End)
+        
+        # User requested: Fluctuate waveform when text is outputted
+        # We simulate a burst of activity
+        self.trigger_waveform_activity()
+
+    def trigger_waveform_activity(self):
+        # Generate a short burst of random levels
+        # We can use QTimer to push updates for ~200ms
+        if not hasattr(self, 'waveform_burst_timer'):
+            self.waveform_burst_timer = QTimer(self)
+            self.waveform_burst_timer.setInterval(30) # 30ms interval
+            self.waveform_burst_timer.timeout.connect(self.process_waveform_burst)
+            self.burst_count = 0
+            
+        self.burst_count = 10 # 10 * 30ms = 300ms of activity
+        if not self.waveform_burst_timer.isActive():
+            self.waveform_burst_timer.start()
+            
+    def process_waveform_burst(self):
+        if self.burst_count > 0:
+            import random
+            # Generate random level between 0.3 and 0.8
+            # But we should respect the recording state
+            if self.is_recording:
+                self.waveform_view.setVisible(True)
+                level = 0.3 + (random.random() * 0.5)
+                self.waveform_view.add_level(level)
+            self.burst_count -= 1
+        else:
+            self.waveform_burst_timer.stop()
+            # Reset to silence
+            if self.is_recording:
+                self.waveform_view.add_level(0.0)
 
     @Slot(str)
     def handle_result_safe(self, text):
         self.update_text(text)
         # update_text in FloatingWindow already handles UI state
+        # Also trigger activity for final result
+        self.trigger_waveform_activity()
 
     @Slot(str)
     def handle_error_safe(self, error_msg):

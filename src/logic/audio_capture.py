@@ -22,9 +22,14 @@ class AudioCapture:
             if self.level_callback:
                 # RMS amplitude
                 rms = np.sqrt(np.mean(indata**2))
-                # Normalize a bit? 
-                # Typical speech might be low, boost it visually
-                level = min(rms * 20, 1.0) # Increased gain for better visibility
+                
+                # Amplified RMS for visibility
+                # Use a high gain so even soft speech is visible
+                amplified = rms * 40
+                
+                # Clamp to 0.0 - 1.0
+                level = min(amplified, 1.0)
+                
                 self.level_callback(level)
 
     def start_recording(self):
@@ -34,8 +39,11 @@ class AudioCapture:
         with self.audio_queue.mutex:
             self.audio_queue.queue.clear()
             
+        # Use a fixed blocksize for consistent UI update rate
+        # 16000Hz / 1024 samples ~= 15 updates per second
         self.stream = sd.InputStream(
             samplerate=self.sample_rate,
+            blocksize=1024, 
             channels=self.channels,
             callback=self.callback
         )
