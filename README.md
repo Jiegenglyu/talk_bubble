@@ -12,10 +12,14 @@ A lightweight, floating voice input tool that transcribes speech and intelligent
 1.  **Voice to Text**: Uses state-of-the-art ASR (Qwen3-ASR-0.6B).
 2.  **Logical Repair**: Uses LLM (Qwen3-0.6B) to fix grammar, segment text, and add logical connectives.
 3.  **Real-time Streaming**: See your speech transcribed as you talk.
-4.  **Custom Presets**: Save your favorite prompts and instructions for quick reuse.
-5.  **Model Loading Protection**: Prevents accidental recording before models are ready.
-6.  **Floating Window**: Always-on-top, unobtrusive UI.
-7.  **Global Hotkey**: Toggle recording with `F9`.
+4.  **Thinking Process Visualization**: View the model's reasoning process in a collapsible section (supports `<think>` tags).
+5.  **History Management**: Access and copy your last 3 results from the history menu.
+6.  **Quick Actions**: One-click **Clear** to reset the screen and **Copy** to clipboard.
+7.  **Enhanced Feedback**: Waveform reacts dynamically to text output for better visual confirmation.
+8.  **Custom Presets**: Save your favorite prompts and instructions for quick reuse.
+9.  **Model Loading Protection**: Prevents accidental recording before models are ready.
+10. **Floating Window**: Always-on-top, unobtrusive UI.
+11. **Global Hotkey**: Toggle recording with `F9`.
 
 ### Requirements
 - macOS (tested) or Windows/Linux
@@ -66,10 +70,14 @@ A lightweight, floating voice input tool that transcribes speech and intelligent
 1.  **语音转文字**: 使用最先进的 ASR 模型 (Qwen3-ASR-0.6B)。
 2.  **智能润色**: 使用 LLM (Qwen3-0.6B) 修复语法、分段并添加逻辑连接词。
 3.  **实时流式输出**: 边说边出字，实时查看转写结果。
-4.  **自定义预设**: 保存您常用的提示词指令，方便下次快速复用。
-5.  **模型加载保护**: 在模型完全加载就绪前，防止误操作录音。
-6.  **悬浮窗口**: 置顶显示，不干扰工作。
-7.  **全局快捷键**: 使用 `F9` 一键切换录音。
+4.  **思考过程可视化**: 支持折叠显示模型的推理思考过程 (`<think>` 标签)，点击可展开查看详情。
+5.  **历史记录管理**: 在菜单中随时查看并复制最近的 3 条生成结果。
+6.  **快捷操作**: 新增 **一键清屏** 按钮，快速重置对话状态；支持一键复制。
+7.  **增强视觉反馈**: 波形图会根据文字输出动态跳动，提供更直观的录音反馈。
+8.  **自定义预设**: 保存您常用的提示词指令，方便下次快速复用。
+9.  **模型加载保护**: 在模型完全加载就绪前，防止误操作录音。
+10. **悬浮窗口**: 置顶显示，不干扰工作。
+11. **全局快捷键**: 使用 `F9` 一键切换录音。
 
 ### 环境要求
 - macOS (已测试) 或 Windows/Linux
